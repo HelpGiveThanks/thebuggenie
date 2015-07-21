@@ -338,7 +338,7 @@
 
         /**
          * Select an object by its unique id
-         * 
+         *
          * @param integer $id
          * @param Criteria $crit (optional) Criteria with filters
          * @param mixed $join
@@ -360,7 +360,7 @@
          * Counts rows
          *
          * @param Criteria $crit
-         * 
+         *
          * @return integer
          */
         public function doCount(Criteria $crit)
@@ -671,7 +671,26 @@
             return $res_id;
         }
 
-        protected function _getColumnDefinitionSQL($column)
+        protected function _getColumnDefaultDefinitionSQL($column)
+        {
+            $sql = '';
+            if (isset($column['default_value'])) {
+                if (is_int($column['default_value'])) {
+                    if ($column['type'] == 'boolean') {
+                        $sql .= ' DEFAULT ';
+                        $sql .= ($column['default_value']) ? 'true' : 'false';
+                    } else {
+                        $sql .= ' DEFAULT ' . $column['default_value'];
+                    }
+                } else {
+                    $sql .= ' DEFAULT \'' . $column['default_value'] . '\'';
+                }
+            }
+
+            return $sql;
+        }
+
+        protected function _getColumnDefinitionSQL($column, $alter = false)
         {
             $fsql = '';
             switch ($column['type']) {
@@ -716,17 +735,8 @@
             if ($column['type'] != 'text') {
                 if (isset($column['auto_inc']) && $column['auto_inc'] == true && Core::getDBtype() != 'pgsql') {
                     $fsql .= ' AUTO_INCREMENT';
-                } elseif (isset($column['default_value']) && $column['default_value'] !== null && !(isset($column['auto_inc']) && $column['auto_inc'] == true && Core::getDBtype() == 'pgsql')) {
-                    if (is_int($column['default_value'])) {
-                        if ($column['type'] == 'boolean') {
-                            $fsql .= ' DEFAULT ';
-                            $fsql .= ($column['default_value']) ? 'true' : 'false';
-                        } else {
-                            $fsql .= ' DEFAULT ' . $column['default_value'];
-                        }
-                    } else {
-                        $fsql .= ' DEFAULT \'' . $column['default_value'] . '\'';
-                    }
+                } elseif (isset($column['default_value']) && $column['default_value'] !== null && !(Core::getDBtype() == 'pgsql' && $alter) && !(isset($column['auto_inc']) && $column['auto_inc'] == true && Core::getDBtype() == 'pgsql')) {
+                    $fsql .= $this->_getColumnDefaultDefinitionSQL($column);
                 }
             }
             return $fsql;
@@ -783,7 +793,26 @@
                     $sql .= " ALTER COLUMN $qc" . $this->_getRealColumnFieldName($details['name']) . "$qc TYPE ";
                     break;
             }
-            $sql .= $this->_getColumnDefinitionSQL($details);
+            $sql .= $this->_getColumnDefinitionSQL($details, true);
+
+            return $sql;
+        }
+
+        protected function _getAlterColumnDefaultSQL($details)
+        {
+            switch (Core::getDBtype()) {
+                case 'pgsql':
+                    $default_definition = $this->_getColumnDefaultDefinitionSQL($details);
+                    if (!$default_definition) {
+                        $sql = '';
+                    } else {
+                        $sql = 'ALTER TABLE ' . $this->_getTableNameSQL();
+                        $qc = $this->getQC();
+                        $sql .= " ALTER COLUMN $qc" . $this->_getRealColumnFieldName($details['name']) . "$qc SET";
+                        $sql .= $default_definition;
+                    }
+                    break;
+            }
 
             return $sql;
         }
@@ -822,7 +851,9 @@
             }
             if (count($sqls)) {
                 foreach ($sqls as $sqlStmt) {
-                    Statement::getPreparedStatement($sqlStmt)->performQuery();
+                    if ($sqlStmt) {
+                        Statement::getPreparedStatement($sqlStmt)->performQuery();
+                    }
                 }
             }
 
@@ -833,13 +864,16 @@
                 if (in_array($column, $dropped_columns)) continue;
 
                 $sqls[] = $this->_getAlterColumnSQL($new_columns[$column]);
+                $sqls[] = $this->_getAlterColumnDefaultSQL($new_columns[$column]);
             }
             foreach ($dropped_columns as $details) {
                 $sqls[] = $this->_getDropColumnSQL($details);
             }
             if (count($sqls)) {
                 foreach ($sqls as $sqlStmt) {
-                    Statement::getPreparedStatement($sqlStmt)->performQuery();
+                    if ($sqlStmt) {
+                        Statement::getPreparedStatement($sqlStmt)->performQuery();
+                    }
                 }
             }
         }
